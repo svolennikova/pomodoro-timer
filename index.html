@@ -93,12 +93,47 @@
   .presets button.on { border-color: var(--accent); color: var(--accent); }
   .hint { color: var(--muted); font-size: 12px; text-align: center; }
   kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+
+  .nav { display: flex; justify-content: flex-end; margin: -8px 0 8px; }
+  .nav button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px;
+    padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  body.in-cabinet #timerView, body:not(.in-cabinet) #cabinetView { display: none; }
+
+  .profile { display: flex; align-items: center; gap: 14px; }
+  .avatar { flex: none; width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: grid; place-items: center; font-size: 24px; font-weight: 700; }
+  .profile input { font-size: 18px; font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat { background: var(--bg); border-radius: 12px; padding: 12px 6px; text-align: center; }
+  .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .k { font-size: 12px; color: var(--muted); }
+  .filters { display: flex; gap: 6px; margin-bottom: 10px; }
+  .filters button { flex: 1; border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px;
+    padding: 6px 8px; font: inherit; font-size: 13px; cursor: pointer; }
+  .filters button.on { border-color: var(--accent); color: var(--accent); }
+  li.trow { display: block; padding: 10px 6px; border-bottom: 1px solid var(--line); border-radius: 0; cursor: default; }
+  li.trow:last-child { border-bottom: 0; }
+  li.trow:hover { background: none; }
+  .trow .head { display: flex; align-items: center; gap: 8px; }
+  .trow .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .trow .meta b { color: var(--ink); }
+  .trow .bar { height: 4px; border-radius: 2px; background: var(--line); margin-top: 6px; overflow: hidden; }
+  .trow .bar i { display: block; height: 100%; background: var(--accent); }
+  .trow.done .bar i { background: var(--leaf); }
+  .trow .go { border: 1px solid var(--line); background: none; color: var(--ink); border-radius: 8px; padding: 2px 8px; font: inherit; font-size: 13px; cursor: pointer; }
+  .badge { font-size: 11px; border-radius: 999px; padding: 1px 8px; background: var(--bg); color: var(--muted); white-space: nowrap; }
+  .trow.done .badge { color: var(--leaf); }
+  .data { display: flex; gap: 8px; }
+  .data button { flex: 1; border-radius: 10px; padding: 10px; font: inherit; font-size: 14px; cursor: pointer; }
+  .data-note { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
 </style>
 </head>
 <body>
 <main>
+  <div class="nav"><button id="navBtn">👤 Личный кабинет</button></div>
   <h1>🍅 ПОМИДОРО-ТАЙМЕР</h1>
 
+  <div id="timerView">
   <div class="modes" role="tablist">
     <button data-mode="focus" class="on">Фокус</button>
     <button data-mode="short">Короткий перерыв</button>
@@ -155,6 +190,45 @@
   </section>
 
   <p class="hint"><kbd>Пробел</kbd> — старт/пауза · <kbd>R</kbd> — сброс · клик по задаче делает её текущей</p>
+  </div>
+
+  <div id="cabinetView">
+    <section class="card">
+      <div class="profile">
+        <div class="avatar" id="avatar">🍅</div>
+        <input type="text" id="profileName" placeholder="Как тебя зовут?" autocomplete="off" maxlength="40">
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Всего</h2>
+      <div class="stats">
+        <div class="stat"><div class="v" id="statPoms">0</div><div class="k">помидоров</div></div>
+        <div class="stat"><div class="v" id="statTime">0 мин</div><div class="k">фокуса</div></div>
+        <div class="stat"><div class="v" id="statDone">0 / 0</div><div class="k">задач выполнено</div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Мои задачи</h2>
+      <div class="filters">
+        <button data-filter="all" class="on">Все</button>
+        <button data-filter="open">В работе</button>
+        <button data-filter="done">Выполненные</button>
+      </div>
+      <ul id="cabinetList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Сохранение</h2>
+      <div class="data">
+        <button id="exportBtn" class="ghost">⬇ Скачать копию</button>
+        <button id="importBtn" class="ghost">⬆ Загрузить</button>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
+      </div>
+      <p class="data-note">Данные автоматически сохраняются в этом браузере. Скачай копию, чтобы не потерять их или перенести на другое устройство.</p>
+    </section>
+  </div>
 </main>
 
 <script>
@@ -176,10 +250,20 @@ let state = {
   endAt: null,        // timestamp, when running
   focusStreak: 0,     // focus sessions since last long break
   tasks: store.get('tt.tasks', []),
+  stats: store.get('tt.stats', null),  // all-time totals, incl. sessions without a task
+  profile: store.get('tt.profile', { name: '' }),
+  focusSec: 0,        // focus time spent in the current session
+  startedAt: null,
   activeId: store.get('tt.active', null),
   day: store.get('tt.day', { date: todayKey(), count: 0 }),
 };
 if (state.day.date !== todayKey()) state.day = { date: todayKey(), count: 0 };
+// Older saves only counted pomodoros: estimate minutes from the current focus length
+for (const t of state.tasks) if (t.focusSec == null) t.focusSec = t.poms * DURATIONS.focus;
+if (!state.stats) state.stats = {
+  poms: state.tasks.reduce((n, t) => n + t.poms, 0),
+  focusSec: state.tasks.reduce((n, t) => n + t.focusSec, 0),
+};
 
 const $ = id => document.getElementById(id);
 const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -211,6 +295,7 @@ function render() {
   $('todayN').textContent = state.day.count;
   $('tomatoes').textContent = '🍅'.repeat(state.day.count) || '—';
   renderTasks();
+  if (document.body.classList.contains('in-cabinet')) renderCabinet();
 }
 
 function renderTasks() {
@@ -240,17 +325,24 @@ function save() {
   store.set('tt.tasks', state.tasks);
   store.set('tt.active', state.activeId);
   store.set('tt.day', state.day);
+  store.set('tt.stats', state.stats);
+  store.set('tt.profile', state.profile);
 }
 
 let timer = null;
 function start() {
   ensureAudio();
   state.endAt = Date.now() + state.left * 1000;
+  state.startedAt = Date.now();
   timer = setInterval(tick, 250);
   render();
 }
 function pause() {
   clearInterval(timer); timer = null;
+  if (state.endAt && state.mode === 'focus') {
+    // endAt caps the elapsed time if the tab slept past the end of the session
+    state.focusSec += (Math.min(Date.now(), state.endAt) - state.startedAt) / 1000;
+  }
   state.endAt = null;
   render();
 }
@@ -263,6 +355,7 @@ function setMode(m) {
   pause();
   state.mode = m;
   state.left = DURATIONS[m];
+  state.focusSec = 0;
   render();
 }
 function finish(skipped = false) {
@@ -271,8 +364,11 @@ function finish(skipped = false) {
     if (state.day.date !== todayKey()) state.day = { date: todayKey(), count: 0 };
     state.day.count++;
     state.focusStreak++;
+    const sec = Math.round(state.focusSec);
+    state.stats.poms++;
+    state.stats.focusSec += sec;
     const t = state.tasks.find(t => t.id === state.activeId);
-    if (t) t.poms++;
+    if (t) { t.poms++; t.focusSec += sec; }
     save();
     chime([523, 659, 784]);
     celebrate();
@@ -348,7 +444,7 @@ $('form').onsubmit = e => {
   e.preventDefault();
   const text = $('newTask').value.trim();
   if (!text) return;
-  const t = { id: Date.now(), text, done: false, poms: 0 };
+  const t = { id: Date.now(), text, done: false, poms: 0, focusSec: 0 };
   state.tasks.push(t);
   if (!state.activeId) state.activeId = t.id;
   $('newTask').value = '';
@@ -359,6 +455,92 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Space') { e.preventDefault(); $('start').click(); }
   if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') setMode(state.mode);
 });
+
+// ---- Личный кабинет ----
+const fmtFocus = sec => {
+  const m = Math.round(sec / 60);
+  return m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч ${m % 60} мин`;
+};
+let filter = 'all';
+
+function renderCabinet() {
+  const name = state.profile.name.trim();
+  $('avatar').textContent = name ? name[0].toUpperCase() : '🍅';
+  if ($('profileName') !== document.activeElement) $('profileName').value = state.profile.name;
+  $('statPoms').textContent = state.stats.poms;
+  $('statTime').textContent = fmtFocus(state.stats.focusSec);
+  $('statDone').textContent = `${state.tasks.filter(t => t.done).length} / ${state.tasks.length}`;
+  document.querySelectorAll('[data-filter]').forEach(b => b.classList.toggle('on', b.dataset.filter === filter));
+
+  const ul = $('cabinetList');
+  ul.innerHTML = '';
+  const tasks = state.tasks.filter(t => filter === 'all' || (filter === 'done') === t.done);
+  if (!tasks.length) { ul.innerHTML = '<li class="empty">Здесь пока нет задач</li>'; return; }
+  const maxSec = Math.max(...state.tasks.map(t => t.focusSec), 1);
+  for (const t of tasks) {
+    const li = document.createElement('li');
+    li.className = 'trow' + (t.done ? ' done' : '');
+    li.innerHTML = `<div class="head">
+        <span class="label"></span>
+        <span class="badge">${t.done ? 'выполнена' : 'в работе'}</span>
+        ${t.done ? '' : '<button class="go" title="Работать над задачей">▶</button>'}
+        <button class="del" aria-label="Удалить">×</button>
+      </div>
+      <div class="meta"><span>🍅 <b>${t.poms}</b></span><span>⏱ <b>${fmtFocus(t.focusSec)}</b></span>
+        <span>с ${new Date(t.id).toLocaleDateString('ru-RU')}</span></div>
+      <div class="bar"><i style="width:${(t.focusSec / maxSec * 100).toFixed(1)}%"></i></div>`;
+    li.querySelector('.label').textContent = t.text;
+    const go = li.querySelector('.go');
+    if (go) go.onclick = () => { state.activeId = t.id; save(); showCabinet(false); };
+    li.querySelector('.del').onclick = () => {
+      if (!confirm(`Удалить задачу «${t.text}»? Её помидоры останутся в общей статистике.`)) return;
+      state.tasks = state.tasks.filter(x => x.id !== t.id);
+      if (state.activeId === t.id) state.activeId = null;
+      save(); render();
+    };
+    ul.appendChild(li);
+  }
+}
+
+function showCabinet(on) {
+  document.body.classList.toggle('in-cabinet', on);
+  $('navBtn').textContent = on ? '🍅 К таймеру' : '👤 Личный кабинет';
+  render();
+}
+$('navBtn').onclick = () => showCabinet(!document.body.classList.contains('in-cabinet'));
+$('profileName').oninput = e => { state.profile.name = e.target.value; save(); renderCabinet(); };
+document.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; renderCabinet(); });
+
+$('exportBtn').onclick = () => {
+  const data = { app: 'pomodoro-timer', version: 1, exportedAt: new Date().toISOString(),
+    profile: state.profile, tasks: state.tasks, stats: state.stats, minutes };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  a.download = `pomodoro-${todayKey()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== 'pomodoro-timer' || !Array.isArray(data.tasks)) throw new Error();
+    if (!confirm('Заменить текущие данные данными из файла?')) return;
+    state.tasks = data.tasks.map(t => ({ id: Number(t.id) || Date.now(), text: String(t.text ?? ''), done: !!t.done,
+      poms: Number(t.poms) || 0, focusSec: Number(t.focusSec) || 0 }));
+    state.stats = { poms: Number(data.stats?.poms) || 0, focusSec: Number(data.stats?.focusSec) || 0 };
+    state.profile = { name: String(data.profile?.name ?? '') };
+    if (!state.tasks.some(t => t.id === state.activeId)) state.activeId = null;
+    save();
+    if (data.minutes) for (const m in LIMITS) if (data.minutes[m]) setMinutes(m, data.minutes[m]);
+    render();
+  } catch {
+    alert('Не получилось прочитать файл — это точно копия из помидоро-таймера?');
+  }
+};
 
 render();
 </script>
