@@ -282,6 +282,8 @@ let state = {
   profile: store.get('tt.profile', { name: '' }),
   focusSec: 0,        // focus time spent in the current session
   startedAt: null,
+  sessionId: newSessionId(),  // tells devices which session a finish belongs to
+  lastFinished: null,         // sessionId of the last counted session, so it is counted once
   activeId: store.get('tt.active', null),
   day: store.get('tt.day', { date: todayKey(), count: 0 }),
 };
@@ -293,6 +295,7 @@ if (!state.stats) state.stats = {
   focusSec: state.tasks.reduce((n, t) => n + t.focusSec, 0),
 };
 
+function newSessionId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 const $ = id => document.getElementById(id);
 const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
@@ -356,7 +359,33 @@ function save() {
   store.set('tt.stats', state.stats);
   store.set('tt.profile', state.profile);
   store.set('tt.minutes', minutes);
+  store.set('tt.timer', timerData());
   cloud.save();
+}
+
+// Timer state as stored and synced: a running timer is described by its end time,
+// so every device counts down to the same moment.
+function timerData() {
+  return { mode: state.mode, endAt: state.endAt, startedAt: state.endAt ? state.startedAt : null,
+    left: state.endAt ? null : state.left, focusSec: Math.round(state.focusSec), streak: state.focusStreak,
+    sessionId: state.sessionId, lastFinished: state.lastFinished };
+}
+function applyTimer(t) {
+  clearInterval(timer); timer = null;
+  state.mode = t.mode;
+  state.focusSec = t.focusSec;
+  state.focusStreak = t.streak;
+  state.sessionId = t.sessionId;
+  state.lastFinished = t.lastFinished;
+  if (t.endAt) {
+    state.endAt = t.endAt;
+    state.startedAt = t.startedAt;
+    state.left = Math.max(0, Math.round((t.endAt - Date.now()) / 1000));
+    timer = setInterval(tick, 250);
+  } else {
+    state.endAt = null;
+    state.left = Math.min(t.left ?? DURATIONS[t.mode], DURATIONS[t.mode]);
+  }
 }
 
 let timer = null;
@@ -365,31 +394,49 @@ function start() {
   state.endAt = Date.now() + state.left * 1000;
   state.startedAt = Date.now();
   timer = setInterval(tick, 250);
-  render();
+  save(); render();
 }
-function pause() {
+function stopClock() {
   clearInterval(timer); timer = null;
-  if (state.endAt && state.mode === 'focus') {
+  if (state.endAt) {
+    state.left = Math.max(0, Math.round((state.endAt - Date.now()) / 1000));
     // endAt caps the elapsed time if the tab slept past the end of the session
-    state.focusSec += (Math.min(Date.now(), state.endAt) - state.startedAt) / 1000;
+    if (state.mode === 'focus') state.focusSec += (Math.min(Date.now(), state.endAt) - state.startedAt) / 1000;
   }
   state.endAt = null;
-  render();
 }
+function pause() {
+  stopClock();
+  save(); render();
+}
+let finishing = false;
 function tick() {
+  if (finishing) return;
   state.left = Math.max(0, Math.round((state.endAt - Date.now()) / 1000));
   if (state.left === 0) return finish();
   render();
 }
 function setMode(m) {
-  pause();
+  stopClock();
   state.mode = m;
   state.left = DURATIONS[m];
   state.focusSec = 0;
-  render();
+  state.sessionId = newSessionId();
+  save(); render();
 }
-function finish(skipped = false) {
-  pause();
+async function finish(skipped = false) {
+  if (finishing) return;
+  finishing = true;
+  try { await finishSession(skipped); } finally { finishing = false; }
+}
+async function finishSession(skipped) {
+  const sid = state.sessionId;
+  stopClock();
+  // Another device may have counted this session already: check the account first
+  if (!skipped) await cloud.refresh();
+  if (state.sessionId !== sid || state.lastFinished === sid) return render();
+  stopClock();
+  state.lastFinished = sid;
   if (state.mode === 'focus' && !skipped) {
     if (state.day.date !== todayKey()) state.day = { date: todayKey(), count: 0 };
     state.day.count++;
@@ -418,6 +465,8 @@ let audio;
 function ensureAudio() {
   try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch {}
 }
+// Unlock sound on the first tap, so a timer started on another device can still chime here
+document.addEventListener('pointerdown', ensureAudio, { once: true });
 function chime(freqs) {
   if (!audio) return;
   freqs.forEach((f, i) => {
@@ -440,7 +489,6 @@ function setMinutes(m, val) {
   const fresh = state.mode === m && !state.endAt && state.left === DURATIONS[m];
   minutes[m] = val;
   DURATIONS[m] = val * 60;
-  save();
   if (state.mode === m) {
     if (fresh) state.left = DURATIONS[m];
     else {
@@ -448,6 +496,7 @@ function setMinutes(m, val) {
       if (state.endAt) state.endAt = Math.min(state.endAt, Date.now() + DURATIONS[m] * 1000);
     }
   }
+  save();
   renderSettings();
   render();
 }
@@ -558,10 +607,26 @@ function normalize(d) {
     minutes: mins,
     day: { date: String(d.day?.date ?? todayKey()), count: Number(d.day?.count) || 0 },
     activeId: tasks.some(t => t.id === d.activeId) ? d.activeId : null,
+    timer: normalizeTimer(d.timer, mins),
+  };
+}
+function normalizeTimer(t, mins) {
+  t = t || {};
+  const mode = LABELS[t.mode] ? t.mode : 'focus';
+  const endAt = Number(t.endAt) || null;
+  return {
+    mode, endAt,
+    startedAt: endAt ? Number(t.startedAt) || Date.now() : null,
+    left: endAt ? null : Math.max(0, Math.min(Number(t.left ?? mins[mode] * 60), mins[mode] * 60)),
+    focusSec: Number(t.focusSec) || 0,
+    streak: Number(t.streak) || 0,
+    sessionId: String(t.sessionId || 'none'),
+    lastFinished: t.lastFinished ? String(t.lastFinished) : null,
   };
 }
 function snapshotData() {
-  return normalize({ profile: state.profile, tasks: state.tasks, stats: state.stats, minutes, day: state.day, activeId: state.activeId });
+  return normalize({ profile: state.profile, tasks: state.tasks, stats: state.stats, minutes, day: state.day,
+    activeId: state.activeId, timer: timerData() });
 }
 function applyData(data) {
   const d = normalize(data);
@@ -571,6 +636,7 @@ function applyData(data) {
   if (d.day.date === todayKey()) state.day = d.day;
   if ('activeId' in data) state.activeId = d.activeId;
   for (const m in LIMITS) if (d.minutes[m] !== minutes[m]) setMinutes(m, d.minutes[m]);
+  if (data.timer) applyTimer(d.timer);
 }
 
 function note(text, isErr) {
@@ -635,7 +701,7 @@ const cloud = {
   save() {
     if (!this.ref) return;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), 800);
+    this.timer = setTimeout(() => this.flush(), 300);
   },
   async flush() {
     if (this.busy) return this.save();
@@ -649,6 +715,21 @@ const cloud = {
     } catch {
       setSync('Не удалось сохранить в аккаунт — данные пока только в этом браузере', false);
     } finally { this.busy = false; }
+  },
+  // Pull the latest account state before counting a finished session
+  async refresh() {
+    if (!this.ref) return;
+    try {
+      const snap = await Promise.race([this.ref.get(), new Promise((_, no) => setTimeout(no, 4000))]);
+      if (snap.exists) this.receive(snap.data());
+    } catch {}
+  },
+  receive(data) {
+    const json = JSON.stringify(normalize(data));
+    if (json === this.synced) return;
+    this.synced = json;
+    applyData(data);
+    save(); render();
   },
   async init() {
     const [db, user] = await Promise.all([window.claude?.use?.('db'), window.claude?.use?.('user')]);
@@ -669,12 +750,7 @@ const cloud = {
     setSync('☁ Сохраняется в твоём аккаунте — доступно на любом устройстве', true);
     // Changes made on another device
     ref.onSnapshot(s => {
-      if (!s.exists || s.metadata.hasPendingWrites) return;
-      const json = JSON.stringify(normalize(s.data()));
-      if (json === this.synced) return;
-      this.synced = json;
-      applyData(s.data());
-      save(); render();
+      if (s.exists && !s.metadata.hasPendingWrites) this.receive(s.data());
     }, () => {});
   },
 };
@@ -683,6 +759,8 @@ function setSync(text, on) {
   $('syncStatus').classList.toggle('on', on);
 }
 
+const savedTimer = store.get('tt.timer', null);
+if (savedTimer) applyTimer(normalizeTimer(savedTimer, minutes));
 render();
 cloud.init();
 </script>
