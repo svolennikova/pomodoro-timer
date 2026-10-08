@@ -16,13 +16,22 @@
     --break: #3a8fb7;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #1c1816;
       --card: #26211e;
       --ink: #f3ece4;
       --muted: #a89c91;
       --line: #3a332e;
+      color-scheme: dark;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1c1816;
+    --card: #26211e;
+    --ink: #f3ece4;
+    --muted: #a89c91;
+    --line: #3a332e;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body {
@@ -126,6 +135,17 @@
   .data { display: flex; gap: 8px; }
   .data button { flex: 1; border-radius: 10px; padding: 10px; font: inherit; font-size: 14px; cursor: pointer; }
   .data-note { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+  .data-note.err { color: var(--accent); }
+  .sync { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .sync.on { color: var(--leaf); }
+  .ask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; padding: 16px; z-index: 10; }
+  .ask[hidden] { display: none; }
+  .ask > div { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; max-width: 360px; width: 100%; }
+  .ask p { margin: 0 0 14px; overflow-wrap: anywhere; }
+  .ask .row { display: flex; gap: 8px; justify-content: flex-end; }
+  .ask button { border: 0; border-radius: 10px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  .ask .ok { background: var(--accent); color: #fff; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -198,6 +218,7 @@
         <div class="avatar" id="avatar">🍅</div>
         <input type="text" id="profileName" placeholder="Как тебя зовут?" autocomplete="off" maxlength="40">
       </div>
+      <div class="sync" id="syncStatus">Данные хранятся только в этом браузере</div>
     </section>
 
     <section class="card">
@@ -226,8 +247,15 @@
         <button id="importBtn" class="ghost">⬆ Загрузить</button>
         <input type="file" id="importFile" accept="application/json,.json" hidden>
       </div>
-      <p class="data-note">Данные автоматически сохраняются в этом браузере. Скачай копию, чтобы не потерять их или перенести на другое устройство.</p>
+      <p class="data-note" id="dataNote">Скачай копию, чтобы не потерять данные или перенести их в другое место.</p>
     </section>
+  </div>
+
+  <div class="ask" id="ask" hidden>
+    <div role="dialog" aria-modal="true" aria-labelledby="askText">
+      <p id="askText"></p>
+      <div class="row"><button id="askNo" class="ghost">Отмена</button><button id="askOk" class="ok">Да</button></div>
+    </div>
   </div>
 </main>
 
@@ -327,6 +355,8 @@ function save() {
   store.set('tt.day', state.day);
   store.set('tt.stats', state.stats);
   store.set('tt.profile', state.profile);
+  store.set('tt.minutes', minutes);
+  cloud.save();
 }
 
 let timer = null;
@@ -410,7 +440,7 @@ function setMinutes(m, val) {
   const fresh = state.mode === m && !state.endAt && state.left === DURATIONS[m];
   minutes[m] = val;
   DURATIONS[m] = val * 60;
-  store.set('tt.minutes', minutes);
+  save();
   if (state.mode === m) {
     if (fresh) state.left = DURATIONS[m];
     else {
@@ -492,8 +522,8 @@ function renderCabinet() {
     li.querySelector('.label').textContent = t.text;
     const go = li.querySelector('.go');
     if (go) go.onclick = () => { state.activeId = t.id; save(); showCabinet(false); };
-    li.querySelector('.del').onclick = () => {
-      if (!confirm(`Удалить задачу «${t.text}»? Её помидоры останутся в общей статистике.`)) return;
+    li.querySelector('.del').onclick = async () => {
+      if (!await ask(`Удалить задачу «${t.text}»? Её помидоры останутся в общей статистике.`, 'Удалить')) return;
       state.tasks = state.tasks.filter(x => x.id !== t.id);
       if (state.activeId === t.id) state.activeId = null;
       save(); render();
@@ -511,12 +541,69 @@ $('navBtn').onclick = () => showCabinet(!document.body.classList.contains('in-ca
 $('profileName').oninput = e => { state.profile.name = e.target.value; save(); renderCabinet(); };
 document.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { filter = b.dataset.filter; renderCabinet(); });
 
-$('exportBtn').onclick = () => {
-  const data = { app: 'pomodoro-timer', version: 1, exportedAt: new Date().toISOString(),
-    profile: state.profile, tasks: state.tasks, stats: state.stats, minutes };
+// One canonical shape for backups, the cloud document and change detection
+function normalize(d) {
+  const mins = {};
+  for (const m in LIMITS) {
+    const [lo, hi] = LIMITS[m];
+    mins[m] = Math.min(hi, Math.max(lo, Math.round(Number(d.minutes?.[m])) || minutes[m]));
+  }
+  const tasks = (Array.isArray(d.tasks) ? d.tasks : []).map(t => ({ id: Number(t.id) || Date.now(),
+    text: String(t.text ?? ''), done: !!t.done, poms: Number(t.poms) || 0, focusSec: Number(t.focusSec) || 0 }));
+  return {
+    app: 'pomodoro-timer', version: 1,
+    profile: { name: String(d.profile?.name ?? '') },
+    tasks,
+    stats: { poms: Number(d.stats?.poms) || 0, focusSec: Number(d.stats?.focusSec) || 0 },
+    minutes: mins,
+    day: { date: String(d.day?.date ?? todayKey()), count: Number(d.day?.count) || 0 },
+    activeId: tasks.some(t => t.id === d.activeId) ? d.activeId : null,
+  };
+}
+function snapshotData() {
+  return normalize({ profile: state.profile, tasks: state.tasks, stats: state.stats, minutes, day: state.day, activeId: state.activeId });
+}
+function applyData(data) {
+  const d = normalize(data);
+  state.tasks = d.tasks;
+  state.stats = d.stats;
+  state.profile = d.profile;
+  if (d.day.date === todayKey()) state.day = d.day;
+  if ('activeId' in data) state.activeId = d.activeId;
+  for (const m in LIMITS) if (d.minutes[m] !== minutes[m]) setMinutes(m, d.minutes[m]);
+}
+
+function note(text, isErr) {
+  $('dataNote').textContent = text;
+  $('dataNote').classList.toggle('err', !!isErr);
+}
+
+// In-page confirmation: the artifact viewer suppresses confirm()/alert()
+function ask(text, okLabel = 'Да') {
+  $('askText').textContent = text;
+  $('askOk').textContent = okLabel;
+  $('ask').hidden = false;
+  $('askOk').focus();
+  return new Promise(resolve => {
+    const done = v => { $('ask').hidden = true; resolve(v); };
+    $('askOk').onclick = () => done(true);
+    $('askNo').onclick = () => done(false);
+    $('ask').onkeydown = e => { if (e.key === 'Escape') done(false); };
+  });
+}
+
+$('exportBtn').onclick = async () => {
+  const filename = `pomodoro-${todayKey()}.json`;
+  const json = JSON.stringify({ ...snapshotData(), exportedAt: new Date().toISOString() }, null, 2);
+  const downloads = await window.claude?.use?.('downloads');
+  if (downloads) {
+    try { await downloads.save({ filename, data: json }); note('Копия сохранена.'); }
+    catch { note('Копия не сохранена.'); }
+    return;
+  }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-  a.download = `pomodoro-${todayKey()}.json`;
+  a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
@@ -525,24 +612,79 @@ $('importFile').onchange = async e => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
+  let data;
   try {
-    const data = JSON.parse(await file.text());
-    if (data.app !== 'pomodoro-timer' || !Array.isArray(data.tasks)) throw new Error();
-    if (!confirm('Заменить текущие данные данными из файла?')) return;
-    state.tasks = data.tasks.map(t => ({ id: Number(t.id) || Date.now(), text: String(t.text ?? ''), done: !!t.done,
-      poms: Number(t.poms) || 0, focusSec: Number(t.focusSec) || 0 }));
-    state.stats = { poms: Number(data.stats?.poms) || 0, focusSec: Number(data.stats?.focusSec) || 0 };
-    state.profile = { name: String(data.profile?.name ?? '') };
-    if (!state.tasks.some(t => t.id === state.activeId)) state.activeId = null;
-    save();
-    if (data.minutes) for (const m in LIMITS) if (data.minutes[m]) setMinutes(m, data.minutes[m]);
-    render();
+    data = JSON.parse(await file.text());
+    if (data?.app !== 'pomodoro-timer' || !Array.isArray(data.tasks)) throw new Error();
   } catch {
-    alert('Не получилось прочитать файл — это точно копия из помидоро-таймера?');
+    return note('Не получилось прочитать файл. Выбери копию, скачанную из помидоро-таймера.', true);
   }
+  if (!await ask('Заменить текущие задачи и статистику данными из файла?', 'Заменить')) return;
+  applyData(data);
+  save(); render();
+  note('Данные загружены из файла.');
 };
 
+// ---- Сохранение в аккаунте (когда страница открыта на claude.ai) ----
+// Each person's data lives in their own private document; localStorage stays as an offline cache.
+const cloud = {
+  ref: null,
+  synced: null,   // JSON of the last state known to be in the cloud
+  busy: false,
+  timer: null,
+  save() {
+    if (!this.ref) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), 800);
+  },
+  async flush() {
+    if (this.busy) return this.save();
+    const json = JSON.stringify(snapshotData());
+    if (json === this.synced) return;
+    this.busy = true;
+    try {
+      await this.ref.set(JSON.parse(json));
+      this.synced = json;
+      setSync('☁ Сохраняется в твоём аккаунте — доступно на любом устройстве', true);
+    } catch {
+      setSync('Не удалось сохранить в аккаунт — данные пока только в этом браузере', false);
+    } finally { this.busy = false; }
+  },
+  async init() {
+    const [db, user] = await Promise.all([window.claude?.use?.('db'), window.claude?.use?.('user')]);
+    const uid = await user?.id();
+    if (!db || !uid) return;
+    if (!state.profile.name) $('profileName').placeholder = (await user.name()) || 'Как тебя зовут?';
+    const ref = db.doc(`data/users/${uid}/pomodoro`);
+    let snap;
+    try { snap = await ref.get(); } catch { return setSync('Аккаунт недоступен — данные только в этом браузере', false); }
+    this.ref = ref;
+    if (snap.exists) {
+      this.synced = JSON.stringify(normalize(snap.data()));
+      applyData(snap.data());
+      save(); render();
+    } else {
+      this.flush();   // first visit: move whatever this browser has into the account
+    }
+    setSync('☁ Сохраняется в твоём аккаунте — доступно на любом устройстве', true);
+    // Changes made on another device
+    ref.onSnapshot(s => {
+      if (!s.exists || s.metadata.hasPendingWrites) return;
+      const json = JSON.stringify(normalize(s.data()));
+      if (json === this.synced) return;
+      this.synced = json;
+      applyData(s.data());
+      save(); render();
+    }, () => {});
+  },
+};
+function setSync(text, on) {
+  $('syncStatus').textContent = text;
+  $('syncStatus').classList.toggle('on', on);
+}
+
 render();
+cloud.init();
 </script>
 </body>
 </html>
