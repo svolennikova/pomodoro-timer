@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Помидоро-таймер</title>
+<style>
+  :root {
+    --bg: #fbf6ef;
+    --card: #ffffff;
+    --ink: #2b2420;
+    --muted: #8a7f76;
+    --line: #ece3d8;
+    --accent: #e0452f;
+    --leaf: #4f9a3a;
+    --break: #3a8fb7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1816;
+      --card: #26211e;
+      --ink: #f3ece4;
+      --muted: #a89c91;
+      --line: #3a332e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px 48px;
+  }
+  main { width: 100%; max-width: 440px; }
+  h1 { font-size: clamp(22px, 6.4vw, 34px); font-weight: 800; margin: 0 0 20px; text-align: center; letter-spacing: .04em; line-height: 1.1; white-space: nowrap; }
+
+  .modes { display: flex; gap: 6px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 999px; padding: 4px; margin-bottom: 20px; }
+  .modes button { flex: 1; border: 0; background: none; color: var(--muted); padding: 8px 4px;
+    border-radius: 999px; font: inherit; font-size: 14px; cursor: pointer; }
+  .modes button.on { background: var(--accent); color: #fff; }
+  body.is-break .modes button.on { background: var(--break); }
+
+  .stage { position: relative; display: flex; justify-content: center; }
+  svg.tomato { width: 260px; height: 260px; transition: transform .3s; }
+  .stage.ticking svg.tomato { animation: breathe 4s ease-in-out infinite; }
+  @keyframes breathe { 50% { transform: scale(1.03); } }
+  .pop { animation: pop .6s ease; }
+  @keyframes pop { 30% { transform: scale(1.15) rotate(-6deg); } 60% { transform: scale(.95) rotate(4deg); } }
+  .time { position: absolute; top: 54%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 52px; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff;
+    text-shadow: 0 2px 6px rgba(0,0,0,.25); pointer-events: none; }
+  .current { text-align: center; color: var(--muted); min-height: 1.4em; margin: 8px 0 16px; font-size: 14px; }
+  .current b { color: var(--ink); font-weight: 600; }
+
+  .controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 24px; }
+  .controls button { border: 0; border-radius: 12px; padding: 12px 22px; font: inherit; font-weight: 600; cursor: pointer; }
+  #start { background: var(--accent); color: #fff; min-width: 140px; }
+  body.is-break #start { background: var(--break); }
+  .ghost { background: var(--card); color: var(--ink); border: 1px solid var(--line) !important; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; }
+  .today { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tomatoes { font-size: 22px; letter-spacing: 2px; word-break: break-all; }
+  .today .n { font-size: 28px; font-weight: 700; }
+
+  form { display: flex; gap: 8px; margin-bottom: 10px; }
+  input[type=text] { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+    border-radius: 10px; padding: 10px 12px; font: inherit; }
+  form button { border: 0; background: var(--ink); color: var(--bg); border-radius: 10px; padding: 0 14px; font: inherit; font-size: 20px; cursor: pointer; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-radius: 10px; cursor: pointer; }
+  li:hover { background: var(--bg); }
+  li.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  li.done .label { text-decoration: line-through; color: var(--muted); }
+  li .label { flex: 1; overflow-wrap: anywhere; }
+  li .count { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  li input { width: 18px; height: 18px; accent-color: var(--leaf); cursor: pointer; }
+  li .del { border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 4px; opacity: .5; }
+  li .del:hover { opacity: 1; }
+  .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 8px; }
+  .settings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .settings label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .settings input { width: 100%; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+    border-radius: 10px; padding: 10px; font: inherit; font-size: 18px; font-weight: 600; text-align: center; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .presets button { flex: 1; border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px;
+    padding: 6px 8px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .presets button.on { border-color: var(--accent); color: var(--accent); }
+  .hint { color: var(--muted); font-size: 12px; text-align: center; }
+  kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🍅 ПОМИДОРО-ТАЙМЕР</h1>
+
+  <div class="modes" role="tablist">
+    <button data-mode="focus" class="on">Фокус</button>
+    <button data-mode="short">Короткий перерыв</button>
+    <button data-mode="long">Долгий перерыв</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <svg class="tomato" id="tomato" viewBox="0 0 200 200" aria-hidden="true">
+      <ellipse cx="100" cy="186" rx="60" ry="8" fill="rgba(0,0,0,.08)"/>
+      <path id="body" d="M100 48c-46 0-78 30-78 72s34 64 78 64 78-22 78-64-32-72-78-72z" fill="#8bc34a"/>
+      <ellipse cx="66" cy="92" rx="16" ry="10" fill="#fff" opacity=".25" transform="rotate(-30 66 92)"/>
+      <path d="M100 52 l-28 -10 l20 14 l-26 6 l30 2 l-4 14 l8 -14 l8 14 l-4 -14 l30 -2 l-26 -6 l20 -14 z" fill="#3e8e2f"/>
+      <rect x="96" y="22" width="8" height="26" rx="4" fill="#5b7a2a"/>
+    </svg>
+    <div class="time" id="time"></div>
+  </div>
+  <div class="current" id="current"></div>
+
+  <div class="controls">
+    <button id="start">Старт</button>
+    <button id="reset" class="ghost">Сброс</button>
+    <button id="skip" class="ghost" title="Пропустить">⏭</button>
+  </div>
+
+  <section class="card">
+    <h2>Длительность, мин</h2>
+    <div class="settings">
+      <label>Фокус<input type="number" data-set="focus" min="1" max="120" inputmode="numeric"></label>
+      <label>Перерыв<input type="number" data-set="short" min="1" max="60" inputmode="numeric"></label>
+      <label>Долгий<input type="number" data-set="long" min="1" max="90" inputmode="numeric"></label>
+    </div>
+    <div class="presets">
+      <button data-preset="25,5,15">25 / 5 / 15</button>
+      <button data-preset="50,10,30">50 / 10 / 30</button>
+      <button data-preset="15,3,10">15 / 3 / 10</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Задачи</h2>
+    <form id="form">
+      <input type="text" id="newTask" placeholder="Над чем работаем?" autocomplete="off">
+      <button aria-label="Добавить">+</button>
+    </form>
+    <ul id="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Сегодня</h2>
+    <div class="today">
+      <div class="tomatoes" id="tomatoes"></div>
+      <div class="n" id="todayN">0</div>
+    </div>
+  </section>
+
+  <p class="hint"><kbd>Пробел</kbd> — старт/пауза · <kbd>R</kbd> — сброс · клик по задаче делает её текущей</p>
+</main>
+
+<script>
+const LABELS = { focus: 'Фокус', short: 'Короткий перерыв', long: 'Долгий перерыв' };
+const LIMITS = { focus: [1, 120], short: [1, 60], long: [1, 90] };
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+const minutes = { focus: 25, short: 5, long: 15, ...store.get('tt.minutes', {}) };
+const DURATIONS = {};
+for (const m in minutes) DURATIONS[m] = minutes[m] * 60;
+const todayKey = () => new Date().toISOString().slice(0, 10);
+
+let state = {
+  mode: 'focus',
+  left: DURATIONS.focus,
+  endAt: null,        // timestamp, when running
+  focusStreak: 0,     // focus sessions since last long break
+  tasks: store.get('tt.tasks', []),
+  activeId: store.get('tt.active', null),
+  day: store.get('tt.day', { date: todayKey(), count: 0 }),
+};
+if (state.day.date !== todayKey()) state.day = { date: todayKey(), count: 0 };
+
+const $ = id => document.getElementById(id);
+const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+// Green → yellow → red as the focus session progresses
+function ripeColor(p) {
+  const stops = [[139, 195, 74], [244, 180, 0], [224, 69, 47]];
+  const seg = p < .5 ? 0 : 1, t = p < .5 ? p * 2 : (p - .5) * 2;
+  const [a, b] = [stops[seg], stops[seg + 1]];
+  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',')})`;
+}
+
+function render() {
+  const total = DURATIONS[state.mode];
+  const p = Math.min(1, Math.max(0, 1 - state.left / total));
+  $('time').textContent = fmt(state.left);
+  $('body').setAttribute('fill', state.mode === 'focus' ? ripeColor(p) : '#e0452f');
+  $('start').textContent = state.endAt ? 'Пауза' : (state.left < total ? 'Продолжить' : 'Старт');
+  $('stage').classList.toggle('ticking', !!state.endAt);
+  document.body.classList.toggle('is-break', state.mode !== 'focus');
+  document.querySelectorAll('.modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === state.mode));
+  document.title = state.endAt ? `${fmt(state.left)} · ${LABELS[state.mode]}` : 'Помидоро-таймер';
+
+  const active = state.tasks.find(t => t.id === state.activeId);
+  $('current').innerHTML = state.mode !== 'focus' ? 'Отдыхаем ☕'
+    : active ? `Сейчас: <b></b>` : 'Выбери задачу ниже (необязательно)';
+  if (state.mode === 'focus' && active) $('current').querySelector('b').textContent = active.text;
+
+  $('todayN').textContent = state.day.count;
+  $('tomatoes').textContent = '🍅'.repeat(state.day.count) || '—';
+  renderTasks();
+}
+
+function renderTasks() {
+  const ul = $('list');
+  ul.innerHTML = '';
+  if (!state.tasks.length) { ul.innerHTML = '<li class="empty">Пока пусто — добавь первую задачу</li>'; return; }
+  for (const t of state.tasks) {
+    const li = document.createElement('li');
+    li.className = (t.id === state.activeId ? 'active ' : '') + (t.done ? 'done' : '');
+    li.innerHTML = `<input type="checkbox" ${t.done ? 'checked' : ''}><span class="label"></span>
+      <span class="count">${'🍅'.repeat(Math.min(t.poms, 5))}${t.poms > 5 ? '×' + t.poms : ''}</span>
+      <button class="del" aria-label="Удалить">×</button>`;
+    li.querySelector('.label').textContent = t.text;
+    li.querySelector('input').onclick = e => { e.stopPropagation(); t.done = !t.done; save(); render(); };
+    li.querySelector('.del').onclick = e => {
+      e.stopPropagation();
+      state.tasks = state.tasks.filter(x => x.id !== t.id);
+      if (state.activeId === t.id) state.activeId = null;
+      save(); render();
+    };
+    li.onclick = () => { state.activeId = state.activeId === t.id ? null : t.id; save(); render(); };
+    ul.appendChild(li);
+  }
+}
+
+function save() {
+  store.set('tt.tasks', state.tasks);
+  store.set('tt.active', state.activeId);
+  store.set('tt.day', state.day);
+}
+
+let timer = null;
+function start() {
+  ensureAudio();
+  state.endAt = Date.now() + state.left * 1000;
+  timer = setInterval(tick, 250);
+  render();
+}
+function pause() {
+  clearInterval(timer); timer = null;
+  state.endAt = null;
+  render();
+}
+function tick() {
+  state.left = Math.max(0, Math.round((state.endAt - Date.now()) / 1000));
+  if (state.left === 0) return finish();
+  render();
+}
+function setMode(m) {
+  pause();
+  state.mode = m;
+  state.left = DURATIONS[m];
+  render();
+}
+function finish(skipped = false) {
+  pause();
+  if (state.mode === 'focus' && !skipped) {
+    if (state.day.date !== todayKey()) state.day = { date: todayKey(), count: 0 };
+    state.day.count++;
+    state.focusStreak++;
+    const t = state.tasks.find(t => t.id === state.activeId);
+    if (t) t.poms++;
+    save();
+    chime([523, 659, 784]);
+    celebrate();
+  } else if (!skipped) {
+    chime([784, 659, 523]);
+  }
+  const next = state.mode !== 'focus' ? 'focus' : (state.focusStreak % 4 === 0 && state.focusStreak ? 'long' : 'short');
+  setMode(next);
+}
+
+function celebrate() {
+  const svg = $('tomato');
+  svg.classList.remove('pop'); void svg.offsetWidth; svg.classList.add('pop');
+}
+
+let audio;
+function ensureAudio() {
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch {}
+}
+function chime(freqs) {
+  if (!audio) return;
+  freqs.forEach((f, i) => {
+    const o = audio.createOscillator(), g = audio.createGain();
+    const t0 = audio.currentTime + i * 0.18;
+    o.type = 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.25, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.5);
+    o.connect(g).connect(audio.destination);
+    o.start(t0); o.stop(t0 + 0.5);
+  });
+}
+
+// Settings: new duration applies right away if the session hasn't started,
+// otherwise the current session just gets capped at the new length.
+function setMinutes(m, val) {
+  const [lo, hi] = LIMITS[m];
+  val = Math.min(hi, Math.max(lo, Math.round(Number(val)) || minutes[m]));
+  const fresh = state.mode === m && !state.endAt && state.left === DURATIONS[m];
+  minutes[m] = val;
+  DURATIONS[m] = val * 60;
+  store.set('tt.minutes', minutes);
+  if (state.mode === m) {
+    if (fresh) state.left = DURATIONS[m];
+    else {
+      state.left = Math.min(state.left, DURATIONS[m]);
+      if (state.endAt) state.endAt = Math.min(state.endAt, Date.now() + DURATIONS[m] * 1000);
+    }
+  }
+  renderSettings();
+  render();
+}
+function renderSettings() {
+  document.querySelectorAll('[data-set]').forEach(i => { if (i !== document.activeElement) i.value = minutes[i.dataset.set]; });
+  const cur = [minutes.focus, minutes.short, minutes.long].join(',');
+  document.querySelectorAll('[data-preset]').forEach(b => b.classList.toggle('on', b.dataset.preset === cur));
+}
+document.querySelectorAll('[data-set]').forEach(i => {
+  i.onchange = () => { setMinutes(i.dataset.set, i.value); i.value = minutes[i.dataset.set]; };
+  i.onkeydown = e => { if (e.key === 'Enter') i.blur(); };
+});
+document.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => {
+  const [f, s, l] = b.dataset.preset.split(',');
+  setMinutes('focus', f); setMinutes('short', s); setMinutes('long', l);
+});
+renderSettings();
+
+$('start').onclick =() => state.endAt ? pause() : start();
+$('reset').onclick = () => setMode(state.mode);
+$('skip').onclick = () => finish(true);
+document.querySelectorAll('.modes button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+$('form').onsubmit = e => {
+  e.preventDefault();
+  const text = $('newTask').value.trim();
+  if (!text) return;
+  const t = { id: Date.now(), text, done: false, poms: 0 };
+  state.tasks.push(t);
+  if (!state.activeId) state.activeId = t.id;
+  $('newTask').value = '';
+  save(); render();
+};
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); $('start').click(); }
+  if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') setMode(state.mode);
+});
+
+render();
+</script>
+</body>
+</html>
